@@ -10,3 +10,5 @@ GitHub Pages (default branch `/`):
 - Optional rest-day band: add `?day=rest` (for example `?clock=08:00&day=rest`)
 
 `?clock=HH:MM` sets the simulation clock (default 09:30, off-peak). `08:00` is the morning peak and uses the higher other-line berth arrival rate. `?day=rest` is optional and selects the 休息日 band instead of the clock-derived band.
+
+`hub_179_seg2_data.js` includes `SEG2.osm_roads` (OpenStreetMap, 2026-11-08). Background buildings stay off those roads and off the segment-2 corridor.

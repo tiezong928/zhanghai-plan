@@ -523,8 +523,11 @@ for (let s = aS + 10; s < aJ - 40; s += 40) building(fA(s, -(A_W / 2 + 22)), 30,
 building(fB(sS - 8, B_W / 2 + 22), 44, 22, 15, rotB, 'classic');
 building(fB(sS + 75, B_W / 2 + 26), 34, 26, 72, rotB, 'office');
 // 远景：避开道路与上述近景
-const roadSamples = densify([Apt(aS), Apt(aE)], 6).map(p => ({ p, r: 75 })).concat(densify([Bpt(bS), Bpt(bE)], 6).map(p => ({ p, r: 85 })), densify(yardPts, 6).map(p => ({ p, r: 120 })));
-function nearRoad(x, z) { for (const { p, r } of roadSamples) { const dx = p.x - x, dz = p.z - z; if (dx * dx + dz * dz < r * r) return true; } return false; }
+const roadSamples = densify([Apt(aS), Apt(aE)], 6).map(p => ({ p, r: 75 })).concat(densify([Bpt(bS), Bpt(bE)], 6).map(p => ({ p, r: 85 })), densify(yardPts, 6).map(p => ({ p, r: 120 })), densify(seg2Pts, 6).map(p => ({ p, r: 55 })));  // 段2 道路两侧 55m 内不放背景楼
+// OSM 实际道路（段2 周边）：楼不得压在任何道路上（半宽 + 6m 退距）
+const osmSegs = (SEG2.osm_roads || []).flatMap(r => { const q = r.pts.map(toXZ); return q.slice(1).map((b, i) => ({ a: q[i], b, h: r.w / 2 + 6 })); });
+function onOsmRoad(x, z, extra = 0) { for (const { a, b, h } of osmSegs) { const vx = b.x - a.x, vz = b.z - a.z, L = vx * vx + vz * vz; const u = L ? Math.max(0, Math.min(1, ((x - a.x) * vx + (z - a.z) * vz) / L)) : 0; const dx = a.x + u * vx - x, dz = a.z + u * vz - z; const r = h + extra; if (dx * dx + dz * dz < r * r) return true; } return false; }
+function nearRoad(x, z) { if (onOsmRoad(x, z, 10)) return true; for (const { p, r } of roadSamples) { const dx = p.x - x, dz = p.z - z; if (dx * dx + dz * dz < r * r) return true; } return false; }
 for (let i = 0; i < 260; i++) {
   const x = (R() - 0.5) * 1000, z = (R() - 0.5) * 1000; if (nearRoad(x, z)) continue;
   const w = 16 + R() * 18, d = 14 + R() * 14, h = 18 + R() * 70; building(new THREE.Vector3(x, 0, z), w, d, h, rotA + (R() - 0.5) * 0.3, ['res', 'res2', 'res', 'office'][Math.floor(R() * 4)]);
@@ -566,7 +569,7 @@ for (let i = 0; i < 260; i++) {
   const pe = P[P.length - 1], de = P[P.length - 1].clone().sub(P[P.length - 4]).normalize();
   platform(pe.clone().add(rightOf(de).multiplyScalar(3.4)), de, 18);
   // 路边远景：沿线两侧随机楼
-  for (let i = 0; i < P.length; i += 3) { const d = (P[Math.min(i + 1, P.length - 1)].clone().sub(P[Math.max(i - 1, 0)])).normalize(); for (const side of [-1, 1]) { if (R() < 0.45) continue; const off = side > 0 ? 30 + R() * 30 : 45 + R() * 40; building(P[i].clone().add(rightOf(d).multiplyScalar(side * off)), 14 + R() * 16, 12 + R() * 12, 12 + R() * 55, yawOf(d), ['res', 'res2', 'office'][Math.floor(R() * 3)]); } }
+  for (let i = 0; i < P.length; i += 3) { const d = (P[Math.min(i + 1, P.length - 1)].clone().sub(P[Math.max(i - 1, 0)])).normalize(); for (const side of [-1, 1]) { if (R() < 0.45) continue; const off = side > 0 ? 30 + R() * 30 : 45 + R() * 40; { const c = P[i].clone().add(rightOf(d).multiplyScalar(side * off)); if (onOsmRoad(c.x, c.z, 14)) continue; } building(P[i].clone().add(rightOf(d).multiplyScalar(side * off)), 14 + R() * 16, 12 + R() * 12, 12 + R() * 55, yawOf(d), ['res', 'res2', 'office'][Math.floor(R() * 3)]); } }
   window.__seg2 = { iSplit, iRamp, n: P.length };
 })();
 // 长生桥站：双泊位（前位/后位）标线 + 11 线站牌（高德站牌，用户确认）
