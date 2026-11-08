@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>章亥 · Mneme · 179 江南枢纽 → 轨道长生桥 · 三维站段仿真</title>
+<title>章亥 · Mneme · 179 江南枢纽 → 轨道长生桥 → 茶涪路 · 三维站段仿真</title>
 <style>
   html,body{margin:0;height:100%;background:#c9d0d5;overflow:hidden;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#cfe6ff}
   #c{position:absolute;inset:0;display:block}
@@ -72,6 +72,10 @@
   <div class="light"><div id="l2" class="lamp"></div><div class="lt"><b>灯2 · 长生桥路口</b><small id="l2s">绿50 / 红125 · 周期175</small><div class="bar"><i id="l2b"></i></div></div><div class="cd" id="l2c">—</div></div>
   <h4 style="margin-top:10px">区段进度</h4>
   <div id="steps"></div>
+  <h4 style="margin-top:8px">长生桥 · 11 线共用双泊位</h4>
+  <div class="kv"><span>前位 / 后位</span><span id="bOcc">—</span></div>
+  <div class="kv"><span>站前排队</span><span id="bQ">—</span></div>
+  <div class="kv"><span>他线到达率</span><span id="bLam">—</span></div>
   <h4 style="margin-top:10px">驾驶员提醒</h4>
   <div class="kv"><span>发车提醒</span><span id="advDep">—</span></div>
   <div class="kv"><span>建议车速</span><span id="advV">—</span></div>
@@ -88,6 +92,8 @@
     <div><div class="big" id="w1">0s</div><div class="lab">灯1 等待</div></div>
     <div><div class="big" id="w2">0s</div><div class="lab">灯2 等待</div></div>
     <div><div class="big" id="p50">140s</div><div class="lab">实车 P50 / P85 240s</div></div>
+    <div><div class="big" id="csqT">—</div><div class="lab">长生桥 排队 / 停靠</div></div>
+    <div><div class="big" id="seg2T">—</div><div class="lab">段2 计时（实车 P50 220s）</div></div>
     <div><div class="big" id="clock">--:--:--</div><div class="lab">仿真时钟</div></div>
   </div>
 </div>
@@ -110,6 +116,7 @@
 
 <script src="vendor/three.min.js"></script>
 <script src="hub_179_3d_data.js"></script>
+<script src="hub_179_seg2_data.js"></script>
 <script>
 // ---------- 坐标：WGS84 → 本地米制平面（原点取上客点）----------
 const ORIGIN = [29.5146, 106.6532];
@@ -151,7 +158,10 @@ const turn1 = bez(SL1, SL1.clone().add(dir1.clone().multiplyScalar(8)), laneA(al
 const t2a = laneA(alongA(C2) - B_W / 2 + 2), t2b = laneB(A_W / 2 + 8);
 const turn2 = bez(t2a, t2a.clone().add(dA.clone().multiplyScalar(18)), t2b.clone().sub(dB.clone().multiplyScalar(18)), t2b, 20);
 const yardRaw = PH.slice(0, 5).flatMap(ph => ph.path.map(toXZ));
-const routePts = [...yardRaw, ...departPts, ...turn1, SL2, t2a, ...turn2, stStop];
+// 段2（2026-11-08）：长生桥站 → 茶涪路站，按 GPS 代表路径（segment_auto.py），首点与长生桥站平滑衔接
+const seg2Raw = SEG2.path.map(toXZ);
+const seg2Pts = (() => { const k = seg2Raw.findIndex(p => p.distanceTo(stStop) > 25); const tail = seg2Raw.slice(Math.max(k, 1)); return new THREE.CatmullRomCurve3([stStop, ...tail], false, 'centripetal', 0.5).getPoints(Math.max(60, tail.length * 3)).slice(1); })();
+const routePts = [...yardRaw, ...departPts, ...turn1, SL2, t2a, ...turn2, stStop, ...seg2Pts];
 const route = []; let cum = 0;
 routePts.forEach(p => { if (route.length) { const d = p.distanceTo(route[route.length - 1].p); if (d < 0.05) return; cum += d; } route.push({ p: p.clone(), cum }); });
 const TOTAL = cum;
@@ -167,7 +177,14 @@ function posAt(s) {
   }
   const l = route[route.length - 1]; return { p: l.p.clone(), dir: dB.clone() };
 }
-const S_DROPOFF = cumAt(dropC), S_BAY = cumAt(bayC), S_L1 = cumAt(SL1), S_L2 = cumAt(SL2), S_END = TOTAL;
+const S_DROPOFF = cumAt(dropC), S_BAY = cumAt(bayC), S_L1 = cumAt(SL1), S_L2 = cumAt(SL2);
+const S_CSQ = (() => { let b = 0; route.forEach(r => { if (r.p.distanceTo(stStop) < 0.01) b = r.cum; }); return b; })();   // 长生桥站里程
+const S_END = TOTAL, S_CTF = TOTAL;                                                                                       // 茶涪路站
+const L2SEG = S_CTF - S_CSQ;
+// 段2 速度剖面：GPS 运动中车速中位（25m 一格），里程按实际路径长度比例映射
+const SP2 = SEG2.speed_profile_mps, SP2L = SEG2.len_m;
+function vProfile2(s) { const x = (s - S_CSQ) / L2SEG * SP2L; if (x <= SP2[0][0]) return SP2[0][1]; for (let i = 1; i < SP2.length; i++) if (x <= SP2[i][0]) { const [a, va] = SP2[i - 1], [b, vb] = SP2[i]; return va + (vb - va) * (x - a) / (b - a); } return SP2[SP2.length - 1][1]; }
+const F_SPLIT = S_CSQ + SEG2.feature_stops['分流'].s_stop / SP2L * L2SEG, F_RAMP = S_CSQ + SEG2.feature_stops['进辅道'].s_stop / SP2L * L2SEG;
 const l1Pos = { p: SL1.clone(), dir: dir1.clone() }, l2Pos = { p: SL2.clone(), dir: dA.clone() };
 
 // ---------- 三维场景（2026-11：按「江南枢纽实况」百度全景 7 张 + GE 标注图校正观感）----------
@@ -523,36 +540,138 @@ for (let i = 0; i < 260; i++) {
   const arm = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 6), poleMat); arm.position.copy(fA(sG, eA(sG) - 2)).setY(7.4); arm.rotation.y = rotA; scene.add(arm);
   board(tex, 6, 3, fA(sG - 0.2, eA(sG) - 3.5).setY(6.0), dA.clone().negate());
 })();
+// ---------- 段2 场景（自动生成：GPS 代表路径 + 用户现场确认；外观为示意，待街景校正）----------
+(function seg2Scene() {
+  const P = seg2Pts; const iSplit = P.findIndex((p, i) => cumAt(p) >= F_SPLIT), iRamp = P.findIndex(p => cumAt(p) >= F_RAMP - 150 * L2SEG / SP2L);
+  // 主干道：双向六车道示意（公交走右侧外车道，距中线 9m）
+  const mainC = P.map((p, i) => { const d = (P[Math.min(i + 1, P.length - 1)].clone().sub(P[Math.max(i - 1, 0)])).normalize(); return p.clone().add(rightOf(d).multiplyScalar(-9)); });
+  scene.add(ribbon(mainC.slice(0, iRamp + 8), 24, 0x565a5e, 0.003));
+  scene.add(ribbon(mainC.slice(0, iRamp + 8), 25, 0xa29f97, -0.01));
+  scene.add(dashes(mainC.slice(0, iRamp + 8), 0.02, 0xe6b622, 1e4, 0, 0.3));
+  [-4, 4].forEach(o => scene.add(dashes(mainC.slice(0, iRamp + 8).map((p, i, a) => { const d = (a[Math.min(i + 1, a.length - 1)].clone().sub(a[Math.max(i - 1, 0)])).normalize(); return p.clone().add(rightOf(d).multiplyScalar(o * 1.0 + (o > 0 ? 1 : -1) * 0)); }), 0.02, 0xf4f4f0, 4, 6, 0.15)));
+  // 高架：分流点之后主线升起（示意），公交保持地面右侧
+  const elev = mainC.slice(iSplit, iRamp + 8).map((p, i, a) => p.clone().add(rightOf((a[Math.min(i + 1, a.length - 1)].clone().sub(a[Math.max(i - 1, 0)])).normalize()).multiplyScalar(-3)).setY(Math.min(8, i * 0.6)));
+  const deck = ribbon(elev, 10, 0x6e7276, 0); deck.geometry.attributes.position.array.forEach((v, k, arr) => { if (k % 3 === 1) arr[k] = elev[Math.floor(k / 6)].y; }); deck.geometry.attributes.position.needsUpdate = true; scene.add(deck);
+  for (let i = 6; i < elev.length; i += 8) { const c = new THREE.Mesh(new THREE.BoxGeometry(1.4, elev[i].y, 1.4), mat(0x9a9a95)); c.position.copy(elev[i]).setY(elev[i].y / 2); scene.add(c); }
+  // 公交行驶车道（右侧外车道），人行道
+  scene.add(ribbon(P, 4.2, 0x5d6064, 0.006));
+  const walk = P.map((p, i) => { const d = (P[Math.min(i + 1, P.length - 1)].clone().sub(P[Math.max(i - 1, 0)])).normalize(); return p.clone().add(rightOf(d).multiplyScalar(5.5)); });
+  scene.add(ribbon(walk, 4, 0xb6b0a4, 0.15));
+  // 分流变道处：导流线 + 标签
+  const ps = P[iSplit]; const ds = P[iSplit + 1].clone().sub(P[iSplit - 1]).normalize();
+  for (let k = -3; k <= 3; k++) { const m = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.03, 0.35), new THREE.MeshBasicMaterial({ color: 0xf4f4f0 })); m.position.copy(ps.clone().add(ds.clone().multiplyScalar(k * 2.5)).add(rightOf(ds).multiplyScalar(-4))); m.position.y = 0.03; m.rotation.y = yawOf(ds) + 0.6; scene.add(m); }
+  // 进辅道：辅道从主干道右侧分出（示意）
+  const aux = P.slice(iRamp); scene.add(ribbon(aux, 7, 0x5a5d61, 0.008)); scene.add(ribbon(aux, 8, 0xa29f97, -0.005));
+  // 茶涪路站：路边站台
+  const pe = P[P.length - 1], de = P[P.length - 1].clone().sub(P[P.length - 4]).normalize();
+  platform(pe.clone().add(rightOf(de).multiplyScalar(3.4)), de, 18);
+  // 路边远景：沿线两侧随机楼
+  for (let i = 0; i < P.length; i += 3) { const d = (P[Math.min(i + 1, P.length - 1)].clone().sub(P[Math.max(i - 1, 0)])).normalize(); for (const side of [-1, 1]) { if (R() < 0.45) continue; const off = side > 0 ? 30 + R() * 30 : 45 + R() * 40; building(P[i].clone().add(rightOf(d).multiplyScalar(side * off)), 14 + R() * 16, 12 + R() * 12, 12 + R() * 55, yawOf(d), ['res', 'res2', 'office'][Math.floor(R() * 3)]); } }
+  window.__seg2 = { iSplit, iRamp, n: P.length };
+})();
+// 长生桥站：双泊位（前位/后位）标线 + 11 线站牌（高德站牌，用户确认）
+(function () {
+  lineB(sS - 20, sS - 8, B_LANE - 1.85, YEL, 1.2, 0.8, 0.14); lineB(sS - 20, sS - 8, B_LANE + 1.6, YEL, 1.2, 0.8, 0.14);
+  const tex = canvasTex(512, 640, (g, w, h) => { g.fillStyle = '#1e5fae'; g.fillRect(0, 0, w, h); g.fillStyle = '#fff'; g.font = 'bold 54px "PingFang SC",sans-serif'; g.textAlign = 'center'; g.fillText('轨道长生桥', w / 2, 70); g.font = '30px "PingFang SC",sans-serif'; SEG2.berth.lines.forEach((l, i) => { g.fillStyle = l === '179' ? '#ffc43d' : '#fff'; g.fillText(l + ' 路', i % 2 ? w * 0.72 : w * 0.28, 140 + Math.floor(i / 2) * 82); }); });
+  board(tex, 1.6, 2.0, fB(sS + 6, B_W / 2 + 1.2).setY(2.2), nB.clone().negate());
+})();
+
 // 小地图用的道路折线 / 行车线
-const mmRoads = [[Apt(aS), Apt(aE)], [Bpt(bS), Bpt(bE)], yardPts, exitPts];
+const mmRoads = [[Apt(aS), Apt(aE)], [Bpt(bS), Bpt(bE)], yardPts, exitPts, seg2Pts];
 const roadPts = route.filter(r => r.cum >= S_L1 - 1).map(r => r.p);
 
 // ---------- 仿真车辆 ----------
 const bus = makeBus(0x8ec3dd, 0x1f6fa8, 0xf1f3f2, '179');
 scene.add(bus);
+// 长生桥多线泊位：他线 Poisson 到达（时段率由 berth_model.py 用 179 实测『停后位率/站前排队率』反推），停靠时长取实测分布
+const BERTH = { front: sS + 2, rear: sS - 12, queue0: sS - 26, len: 13.5 };
+const OTHER_LINES = SEG2.berth.lines.filter(l => l !== '179');
+const OTHER_COL = [0xd7d9d4, 0x9dc79a, 0xe2b768, 0x86b6d9, 0xcf8e7b, 0xa7a3c9];
+const others = []; // {mesh, line, pos(alongB), state:'approach'|'queue'|'dwell'|'leave', berth, tLeft}
+const berthOcc = [null, null];  // 0 前位 1 后位：占用者（他线对象或 'bus179'）
+function bandOfClock(t) { const h = ((CLOCK0 + t) / 3600) % 24; return h >= 7 && h < 9.5 ? '早高峰' : h >= 16.5 && h < 19 ? '晚高峰' : h >= 9.5 && h < 16.5 ? '平峰' : '低谷'; }
+const DAYTYPE = QS0().get('day') === 'rest' ? '休息日' : null;
+function QS0() { return new URLSearchParams(location.search); }
+function lamOther(t) { const g = DAYTYPE || bandOfClock(t); return SEG2.berth.lam_by_group[g] / 3600; }
+function sampleDwell() { const q = SEG2.berth.dwell_sample, u = Math.random() * (q.length - 1), i = Math.floor(u); return q[i] + (q[i + 1] - q[i]) * (u - i); }
+let nextOther = -600;
+function spawnOther(t) {
+  const line = OTHER_LINES[Math.floor(Math.random() * OTHER_LINES.length)];
+  const m = makeBus(OTHER_COL[others.length % OTHER_COL.length], 0x2a5f8f, 0xf1f3f2, line); scene.add(m);
+  others.push({ mesh: m, line, pos: sS - 140, v: 6, st: 'approach', berth: -1, tLeft: 0 });
+}
+function berthFree(i) { return berthOcc[i] === null; }
+function stepOthers(dt, t) {
+  if (t >= nextOther) { spawnOther(t); nextOther = t + (-Math.log(1 - Math.random()) / lamOther(t)); }
+  // 排队顺序：按位置从前到后
+  others.sort((a, b) => b.pos - a.pos);
+  for (const o of others) {
+    if (o.st === 'approach' || o.st === 'queue') {
+      // 目标：空的最前泊位；否则排在前车后
+      let tgt;
+      if (berthFree(0) && !others.some(x => x !== o && x.st !== 'leave' && x.pos > o.pos && x.pos < BERTH.front + 1 && x.st !== 'dwell')) tgt = BERTH.front;
+      else if (berthFree(1)) tgt = BERTH.rear;
+      else tgt = BERTH.queue0;
+      const ahead = others.filter(x => x !== o && x.pos > o.pos && x.st !== 'leave').map(x => x.pos - BERTH.len);
+      const busAhead = (stage === 4 && state.s >= S_CSQ - 140 && state.s <= S_CSQ + 5) ? [sS + (state.s - S_CSQ) - BERTH.len] : [];
+      const cap = Math.min(tgt, ...ahead, ...busAhead.filter(x => x > o.pos - 1));
+      const rem = cap - o.pos; o.v = rem > 25 ? 6 : Math.max(0, rem / 4); o.pos = Math.min(cap, o.pos + o.v * dt);
+      if (rem < 0.3) { if (tgt === BERTH.front && berthFree(0) && Math.abs(o.pos - BERTH.front) < 0.5) { berthOcc[0] = o; o.berth = 0; o.st = 'dwell'; o.tLeft = sampleDwell(); }
+                       else if (tgt === BERTH.rear && berthFree(1) && Math.abs(o.pos - BERTH.rear) < 0.5) { berthOcc[1] = o; o.berth = 1; o.st = 'dwell'; o.tLeft = sampleDwell(); }
+                       else o.st = 'queue'; }
+    } else if (o.st === 'dwell') {
+      o.tLeft -= dt;
+      const blocked = o.berth === 1 && berthOcc[0] !== null;   // 后位车被前位车挡住：前位走了才能出
+      if (o.tLeft <= 0 && !blocked) { berthOcc[o.berth] = null; o.st = 'leave'; o.v = 0; }
+    } else { o.v = Math.min(9, o.v + 0.6 * dt); o.pos += o.v * dt; }
+    const p = fB(o.pos, B_LANE); o.mesh.position.copy(p); o.mesh.rotation.y = rotB;
+  }
+  for (let i = others.length - 1; i >= 0; i--) if (others[i].pos > sS + 160) { scene.remove(others[i].mesh); others.splice(i, 1); }
+}
+
 
 // 标签（屏幕投影）
-const tagDefs = [['枢纽下客站', dropC.clone().setY(5)], ['179 上客点', bayC.clone().setY(5)], ['灯1 停车线', SL1.clone().setY(7)], ['灯2 停车线', SL2.clone().setY(7)], ['轨道长生桥站', stStop.clone().setY(6)]];
+const tagDefs = [['枢纽下客站', dropC.clone().setY(5)], ['179 上客点', bayC.clone().setY(5)], ['灯1 停车线', SL1.clone().setY(7)], ['灯2 停车线', SL2.clone().setY(7)], ['轨道长生桥站（11线）', stStop.clone().setY(6)], ['高架分流变道处', posAt(F_SPLIT).p.setY(8)], ['主干道进辅道', posAt(F_RAMP).p.setY(6)], ['茶涪路站', posAt(S_CTF).p.setY(6)]];
 const tagsEl = document.getElementById('tags'); const tagEls = tagDefs.map(([t]) => { const d = document.createElement('div'); d.className = 'tag'; d.textContent = t; tagsEl.appendChild(d); return d; });
 
 // ---------- 仿真状态 ----------
 const QS = new URLSearchParams(location.search);
 const state = { t: 0, s: 0, v: 0, a: 0, phase: 'approach', waiting: false, segStart: null, w1: 0, w2: 0, l1stop: false, l2stop: false, speedMul: Number(QS.get('speed')) || 1, done: false };
-const CLOCK0 = 9 * 3600 + 30 * 60; // 09:30 平峰起算
+const CLOCK0 = (() => { const m = /^(\d{1,2}):(\d{2})$/.exec(QS.get('clock') || ''); return m ? (+m[1]) * 3600 + (+m[2]) * 60 : 9 * 3600 + 30 * 60; })(); // 默认 09:30 平峰；?clock=07:50 可选时刻（影响灯2配时以外的时段参数：他线到达率、特征点短停）
 const lights = { light1: { ...SIG.light1, offset: 37 }, light2: { ...SIG.light2, offset: 112 } };
+// 他线预热：仿真时钟前 10 分钟先跑，使长生桥泊位处于稳态（需在 CLOCK0 定义之后）
+function warmOthers() { for (let k = 0; k < 6000; k++) stepOthers(0.1, -600 + k * 0.1); }
 function lightState(id, t) { const L = lights[id]; const c = L.cycle_s, x = ((t + L.offset) % c + c) % c; if (x < L.green_s - 3) return { color: 'green', remain: L.green_s - x }; if (x < L.green_s) return { color: 'amber', remain: L.green_s - x }; return { color: 'red', remain: c - x }; }
-function phaseName(s) { if (state.done) return '到达轨道长生桥站'; if (state.waiting) return '上客点待命 · 等待发车'; if (s < S_DROPOFF) return '沿进站道路进闸 → 下客站'; if (s < S_BAY) return '前往 179 上客点'; if (s < S_L1) return '发车 → 灯1 停车线'; if (s < S_L2) return '过灯1 · 沿车道向东 → 灯2 停车线'; return '过灯2 → 轨道长生桥站'; }
+function phaseName(s) { if (state.done) return '到达茶涪路站'; if (state.waiting) return '上客点待命 · 等待发车'; if (s < S_DROPOFF) return '沿进站道路进闸 → 下客站'; if (s < S_BAY) return '前往 179 上客点'; if (s < S_L1) return '发车 → 灯1 停车线'; if (s < S_L2) return '过灯1 · 沿车道向东 → 灯2 停车线'; if (csq.st === 'queue') return '长生桥站 · 泊位满，排队进站'; if (csq.st === 'dwell') return `长生桥站 · ${csq.berth === 0 ? '前位' : '后位'}停靠上下客`; if (csq.st !== 'gone') return '过灯2 → 轨道长生桥站'; if (s < F_SPLIT) return '长生桥 → 高架分流变道处'; if (s < F_RAMP) return '主干道 → 进辅道'; return '辅道 → 茶涪路站'; }
 // 停靠目标：下一处必须停的里程
 let dwellTimer = 0, stage = 0; // 0 进站→下客 1 下客停 2 →上客 3 候发 4 发车后
+// 179 在长生桥：csq = { st:'run'|'queue'|'dwell'|'gone', berth, tArr, tDep, wait }
+const csq = { st: 'run', berth: -1, tArr: null, tDep: null, wait: 0, dwell: 0 };
+const ctf = { tArr: null, tSplit: null, tRamp: null, stoppedSplit: 0, stoppedRamp: 0 };
+// 段2 运行层：两处现场特征点的短停按实测时段概率抽样（不是信号）
+const FEAT = { split: { done: false, hold: 0 }, ramp: { done: false, hold: 0 } };
+function featHold(name) { const f = SEG2.feature_stops[name]; const p = f.by_group[DAYTYPE || bandOfClock(state.t)].p; if (Math.random() >= p) return 0; const q = f.dur_q, u = Math.random() * (q.length - 1), i = Math.floor(u); return q[i] + (q[i + 1] - q[i]) * (u - i); }
 function targetStop() {
   if (stage === 0) return S_DROPOFF; if (stage === 2) return S_BAY;
   if (stage === 4) {
     const canStop = (S) => { const rem = S - state.s; const bd = state.v * state.v / (2 * K.decel_mps2); return rem >= -0.3 && (rem >= bd - 0.5 || state.v < 0.6); };
     if (state.s < S_L1 + 1 && lightState('light1', state.t).color !== 'green' && canStop(S_L1)) return S_L1;
     if (state.s < S_L2 + 1 && lightState('light2', state.t).color !== 'green' && canStop(S_L2)) return S_L2;
+    if (csq.st === 'run' || csq.st === 'queue') return csqTarget();
+    if (csq.st === 'dwell') return state.s;
+    if (!FEAT.split.done && state.s < F_SPLIT && FEAT.split.hold > 0 && canStop(F_SPLIT)) return F_SPLIT;
+    if (!FEAT.ramp.done && state.s < F_RAMP && FEAT.ramp.hold > 0 && canStop(F_RAMP)) return F_RAMP;
     return S_END;
   }
   return state.s;
+}
+// 179 进长生桥：前位空 → 前位；否则后位空 → 后位；否则排在他线车后
+function csqTarget() {
+  const cand = berthFree(0) ? 0 : berthFree(1) ? 1 : -1;
+  const ahead = others.filter(o => o.st !== 'leave' && o.pos > (sS + (state.s - S_CSQ)) - 0.5).map(o => o.pos - BERTH.len);
+  const want = cand === 0 ? BERTH.front : cand === 1 ? BERTH.rear : BERTH.queue0;
+  const lim = Math.min(want, ...ahead);
+  return S_CSQ + (lim - sS);
 }
 // ---------- 驾驶员提醒：发车提醒 + 建议速度区间 ----------
 // 区间上下限取走廊实车运动中车速（calib_kinematics.json：P25≈14、中位≈22、P75≈27 km/h），不要求司机开出实车少见的速度。
@@ -581,7 +700,7 @@ function updateAdvice() {
   advice.range = best; advice.target = Math.min(best[1] - 0.15, Math.max(best[0] + 0.15, c));
   advice.why = `${name}绿灯 · 距${Math.round(D)}m`;
 }
-const vCap = () => (advice.on && advice.range) ? advice.target : K.cruise_mps;
+const vCap = () => (stage === 4 && csq.st === 'gone') ? vProfile2(state.s) : (advice.on && advice.range) ? advice.target : K.cruise_mps;
 function depart() {
   if (stage !== 3) return; advice.early = advice.depPlan != null && state.t < advice.depPlan - 0.5 ? advice.depPlan - state.t : 0;
   stage = 4; state.waiting = false; state.segStart = state.t; advice.nextT = 0; advice.inBand = advice.moving = 0; document.getElementById('go').disabled = true;
@@ -589,12 +708,21 @@ function depart() {
 function step(dt) {
   if (state.done) return; state.t += dt;
   if (stage === 3 && advice.on && advice.depPlan != null && state.t >= advice.depPlan) depart();   // 按建议：到计划时刻发车
+  stepOthers(dt, state.t);
+  if (stage === 4 && (csq.st === 'run' || csq.st === 'queue') && state.s > S_L2 + 5 && state.s >= S_CSQ - 160 && state.v < 0.3) csq.qWait = (csq.qWait || 0) + dt;   // 泊位排队计时（过灯2后）
   if (stage === 1 || stage === 3) { if (stage === 1) { dwellTimer -= dt; if (dwellTimer <= 0) { stage = 2; } } return; }
+  if (stage === 4 && csq.st === 'dwell') {
+    csq.dwell += dt; const blocked = csq.berth === 1 && berthOcc[0] !== null;
+    if (csq.dwell >= csq.need && !blocked) { berthOcc[csq.berth] = null; csq.st = 'gone'; csq.tDep = state.t; FEAT.split.hold = featHold('分流'); FEAT.ramp.hold = featHold('进辅道'); }
+    return;
+  }
+  if (stage === 4 && (FEAT.split.left > 0 || FEAT.ramp.left > 0)) { const f = FEAT.split.left > 0 ? FEAT.split : FEAT.ramp; f.left -= dt; if (f === FEAT.split) ctf.stoppedSplit += dt; else ctf.stoppedRamp += dt; return; }
   const tgt = targetStop(); const rem = tgt - state.s;
   // 运动学：匀加速/匀减速/巡航，按剩余距离决定是否减速
   const brakeDist = state.v * state.v / (2 * K.decel_mps2);
   if (rem <= 0.6 && state.v < 0.6) { state.s = tgt; state.v = 0; state.a = 0; onArrive(tgt); return; }
   if (state.t >= advice.nextT) { advice.nextT = state.t + 1; updateAdvice(); }   // 提醒按 1Hz 刷新
+  if (stage === 4 && csq.tArr === null && state.s >= S_CSQ - 40) csq.tArr = state.t;
   const vc = vCap();
   if (rem <= brakeDist + 0.3) state.a = -K.decel_mps2; else if (state.v < vc) state.a = K.accel_mps2; else if (state.v > vc + 0.15) state.a = -K.decel_mps2 * 0.5; else state.a = 0;
   state.v = Math.max(0, state.v + state.a * dt); if (state.a > 0) state.v = Math.min(state.v, vc); state.s = Math.min(tgt, state.s + state.v * dt);
@@ -607,7 +735,19 @@ function onArrive(tgt) {
   if (stage === 4) {
     if (Math.abs(tgt - S_L1) < 0.1 && lightState('light1', state.t).color !== 'green') { state.l1stop = true; state.w1 += 0; }
     if (Math.abs(tgt - S_L2) < 0.1 && lightState('light2', state.t).color !== 'green') { state.l2stop = true; }
-    if (tgt >= S_END - 0.1) { state.done = true; state.doneT = state.t; }
+    if (csq.st === 'run' || csq.st === 'queue') {
+      if (tgt >= S_CSQ - 160 && tgt <= S_CSQ + (BERTH.front - sS) + 0.1) {
+        if (csq.tArr === null && state.s >= S_CSQ - 40) csq.tArr = state.t;
+        const at = sS + (state.s - S_CSQ);
+        const b = Math.abs(at - BERTH.front) < 0.6 && berthFree(0) ? 0 : Math.abs(at - BERTH.rear) < 0.6 && berthFree(1) ? 1 : -1;
+        if (b >= 0) { berthOcc[b] = 'bus179'; csq.berth = b; csq.st = 'dwell'; csq.dwell = 0; csq.need = sampleDwell(); csq.wait = csq.qWait || 0; }
+        else csq.st = 'queue';
+      }
+      return;
+    }
+    if (Math.abs(tgt - F_SPLIT) < 0.5 && !FEAT.split.done) { FEAT.split.done = true; FEAT.split.left = FEAT.split.hold; return; }
+    if (Math.abs(tgt - F_RAMP) < 0.5 && !FEAT.ramp.done) { FEAT.ramp.done = true; FEAT.ramp.left = FEAT.ramp.hold; return; }
+    if (tgt >= S_END - 0.1) { state.done = true; state.doneT = state.t; ctf.tArr = state.t; }
   }
 }
 document.getElementById('go').onclick = depart;
@@ -637,7 +777,7 @@ function updateCamera(p, dir, dt) {
 // ---------- HUD ----------
 const gctx = document.getElementById('g').getContext('2d');
 function drawGauge(kmh) { const c = gctx, cx = 150, cy = 150, r = 120; c.clearRect(0, 0, 300, 300); c.lineWidth = 14; c.strokeStyle = '#13263d'; c.beginPath(); c.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 2.25); c.stroke(); if (advice.range) { const ang = v => Math.PI * 0.75 + Math.PI * 1.5 * Math.min(1, v * 3.6 / 60); c.lineWidth = 8; c.strokeStyle = 'rgba(53,224,122,.85)'; c.beginPath(); c.arc(cx, cy, r + 13, ang(advice.range[0]), ang(advice.range[1])); c.stroke(); c.lineWidth = 14; } const f = Math.min(1, kmh / 60); const gr = c.createLinearGradient(0, 0, 300, 0); gr.addColorStop(0, '#2d9cff'); gr.addColorStop(1, '#52e0ff'); c.strokeStyle = gr; c.beginPath(); c.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 0.75 + Math.PI * 1.5 * f); c.stroke(); c.fillStyle = '#6f93b8'; c.font = '18px sans-serif'; c.textAlign = 'center'; for (let k = 0; k <= 60; k += 20) { const a = Math.PI * 0.75 + Math.PI * 1.5 * k / 60; c.fillText(k, cx + Math.cos(a) * (r - 28), cy + Math.sin(a) * (r - 28) + 6); } }
-const stepsEl = document.getElementById('steps'); const stepDefs = [['进站下客', () => stage >= 1], ['上客候发', () => stage >= 3], ['发车', () => stage >= 4], ['过灯1', () => stage >= 4 && state.s > S_L1 + 2], ['过灯2', () => stage >= 4 && state.s > S_L2 + 2], ['到站', () => state.done]];
+const stepsEl = document.getElementById('steps'); const stepDefs = [['进站下客', () => stage >= 1], ['上客候发', () => stage >= 3], ['发车', () => stage >= 4], ['过灯1', () => stage >= 4 && state.s > S_L1 + 2], ['过灯2', () => stage >= 4 && state.s > S_L2 + 2], ['长生桥停靠', () => csq.st === 'gone'], ['过分流处', () => csq.st === 'gone' && state.s > F_SPLIT + 1], ['进辅道', () => csq.st === 'gone' && state.s > F_RAMP + 1], ['到茶涪路', () => state.done]];
 stepsEl.innerHTML = stepDefs.map(([n]) => `<div class="kv"><span>${n}</span><span>·</span></div>`).join('');
 const fmt = s => { s = Math.max(0, Math.floor(s)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
 const fmtClock = t => { t = Math.floor(CLOCK0 + t); return [t / 3600, t / 60 % 60, t % 60].map(x => String(Math.floor(x)).padStart(2, '0')).join(':'); };
@@ -648,6 +788,10 @@ function hud() {
   document.getElementById('segT').textContent = state.segStart == null ? '00:00' : fmt((state.done ? state.doneT : state.t) - state.segStart);
   document.getElementById('w1').textContent = Math.round(state.w1) + 's'; document.getElementById('w2').textContent = Math.round(state.w2) + 's'; document.getElementById('clock').textContent = fmtClock(state.t);
   for (const id of ['light1', 'light2']) { const ls = lightState(id, state.t); const n = id === 'light1' ? 1 : 2; const el = document.getElementById('l' + n); el.className = 'lamp ' + ls.color; document.getElementById('l' + n + 'c').textContent = Math.ceil(ls.remain) + 's'; const Lc = lights[id]; const x = ((state.t + Lc.offset) % Lc.cycle_s); document.getElementById('l' + n + 'b').style.width = (100 * x / Lc.cycle_s) + '%'; document.getElementById('l' + n + 'b').style.background = ls.color === 'red' ? '#ff4d4d' : ls.color === 'amber' ? '#ffc43d' : '#35e07a'; setLamps(lampObjs[id], ls.color); setCountdown(id, ls); setLamps(lampObjs[id + 'x'], ls.color === 'red' ? (ls.remain <= 3 ? 'amber' : 'green') : 'red'); }
+  const occName = o => o === null ? '空' : o === 'bus179' ? '179' : o.line; document.getElementById('bOcc').textContent = occName(berthOcc[0]) + ' / ' + occName(berthOcc[1]);
+  document.getElementById('bQ').textContent = others.filter(o => o.st === 'queue').length + (csq.st === 'queue' ? 1 : 0) + ' 辆'; document.getElementById('bLam').textContent = Math.round(lamOther(state.t) * 3600) + ' 辆/时 · ' + (DAYTYPE || bandOfClock(state.t));
+  document.getElementById('csqT').textContent = csq.tArr === null ? '—' : `${Math.round(csq.qWait || 0)}s / ${Math.round(csq.dwell)}s`;
+  document.getElementById('seg2T').textContent = csq.tArr === null ? '—' : fmt((ctf.tArr ?? state.t) - csq.tArr);
   [...stepsEl.children].forEach((d, i) => { const ok = stepDefs[i][1](); d.lastElementChild.textContent = ok ? '✓' : '·'; d.lastElementChild.style.color = ok ? '#35e07a' : '#4a6b8f'; });
   const depEl = document.getElementById('advDep');
   if (stage === 3 && advice.depPlan != null) { const r = advice.depPlan - state.t; depEl.textContent = r > 0 ? `${fmtClock(advice.depPlan)} · 剩${Math.ceil(r)}s` : '已到计划时刻 · 请发车'; depEl.style.color = r > 0 ? '#e8f4ff' : '#35e07a'; }
@@ -656,7 +800,9 @@ function hud() {
   if (advice.range) { vEl.textContent = `${Math.round(advice.range[0] * 3.6)}–${Math.round(advice.range[1] * 3.6)} km/h`; vEl.style.color = inb ? '#35e07a' : '#ffc43d'; } else { vEl.textContent = '—'; vEl.style.color = ''; }
   document.getElementById('advWhy').textContent = advice.why; document.getElementById('advIn').textContent = advice.moving > 1 ? Math.round(100 * advice.inBand / advice.moving) + '%' : '—';
   const advSub = stage === 4 && !state.done && state.v > 0.5 && advice.range ? `驾驶员提醒 · 建议车速 ${Math.round(advice.range[0] * 3.6)}–${Math.round(advice.range[1] * 3.6)} km/h（${advice.why.split(' · ')[0]}）` : '';
-  const subEl = document.getElementById('sub'); const atL1 = stage === 4 && state.v < 0.05 && Math.abs(state.s - S_L1) < 0.5, atL2 = stage === 4 && state.v < 0.05 && Math.abs(state.s - S_L2) < 0.5; subEl.style.display = (state.done || state.waiting || atL1 || atL2 || stage === 1 || advSub) ? '' : 'none'; subEl.textContent = advSub ? advSub : state.done ? `到站 · 区段用时 ${fmt(state.doneT - state.segStart)} · 实车中位 140s / P85 240s` : state.waiting ? '发车提醒 · 计划 ' + fmtClock(advice.depPlan) + ' 发车，不得早于计划时刻离站' : stage === 1 ? '下客站停车下客（25s）' : atL1 ? '灯1 红灯等待 · 停车线前' : '灯2 红灯等待 · 停车线前';
+  const subEl = document.getElementById('sub'); const atL1 = stage === 4 && state.v < 0.05 && Math.abs(state.s - S_L1) < 0.5, atL2 = stage === 4 && state.v < 0.05 && Math.abs(state.s - S_L2) < 0.5; const atCsq = stage === 4 && (csq.st === 'queue' || csq.st === 'dwell'); const atFeat = FEAT.split.left > 0 || FEAT.ramp.left > 0;
+  subEl.style.display = (state.done || state.waiting || atL1 || atL2 || stage === 1 || advSub || atCsq || atFeat) ? '' : 'none';
+  if (atCsq || atFeat) { subEl.textContent = csq.st === 'queue' ? `长生桥站 · 前后泊位均被占（${occName(berthOcc[0])} / ${occName(berthOcc[1])}），排队等泊位` : csq.st === 'dwell' ? `长生桥站 · ${csq.berth === 0 ? '前位' : '后位'}停靠 ${Math.round(csq.dwell)}s${csq.berth === 1 && berthOcc[0] !== null && csq.dwell >= csq.need ? ' · 前位车未走，被挡' : ''}` : FEAT.split.left > 0 ? '高架分流变道处 · 让行/汇入短停' : '主干道进辅道 · 汇入短停'; } else subEl.textContent = advSub ? advSub : state.done ? `到达茶涪路 · 段1 ${fmt(csq.tArr - state.segStart)}（实车 P50 140s）· 段2 ${fmt(ctf.tArr - csq.tArr)}（实车 P50 220s / P85 255s）` : state.waiting ? '发车提醒 · 计划 ' + fmtClock(advice.depPlan) + ' 发车，不得早于计划时刻离站' : stage === 1 ? '下客站停车下客（25s）' : atL1 ? '灯1 红灯等待 · 停车线前' : '灯2 红灯等待 · 停车线前';
   // 标签投影
   tagDefs.forEach(([, p], i) => { const v = p.clone().project(camera); const el = tagEls[i]; if (v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) { el.style.display = 'none'; return; } el.style.display = ''; el.style.left = ((v.x + 1) / 2 * innerWidth) + 'px'; el.style.top = ((1 - v.y) / 2 * innerHeight) + 'px'; });
 }
@@ -678,6 +824,7 @@ function loop(now) {
 }
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
 camPos.copy(posAt(0).p).add(new THREE.Vector3(-30, 18, 30)); camTgt.copy(posAt(0).p);
+warmOthers();
 requestAnimationFrame(loop);
 // 默认上客点待命、只按按钮发车；演示可加 ?auto=1 在候发 6 秒后自动发车
 if (/auto=1/.test(location.search)) { const iv = setInterval(() => { if (stage === 3) { setTimeout(() => document.getElementById('go').click(), 6000 / state.speedMul); clearInterval(iv); } }, 300); }
